@@ -42,6 +42,36 @@ CKRecord(
 )
 ```
 
+## 2 Sync Scenarios
+
+This section walks through concrete sync scenarios to illustrate how SQLiteData behaves in practice and where assumptions start to break down.
+
+### 2.1 Sending Client Change
+
+This scenario describes a local change to a row that is sent to the server without any concurrent server-side edits.
+
+1. The record is fully in sync. The local database row and the last-known server record reflect the same server state.
+2. The user modifies the record locally.
+	- The change is written to the user database.
+	- `SyncMetadata.userModificationTime` is updated via a trigger.
+	- The modification is recorded with the sync engine as pending for upload via a trigger.
+3. The sync engine picks up the pending change in `SyncEngine.nextRecordZoneChangeBatch(…)` and prepares the record to send.
+	- The `CKRecord` is created from `SyncMetadata._lastKnownServerRecordAllFields`. If no last-known server record exists, a fresh `CKRecord` is created instead.
+	- The local row is then applied onto this record using `CKRecord.update(with:userModificationTime:)`.
+	- Modified fields are stamped with the current `userModificationTime`, while unchanged fields retain their previous timestamps from the last-known server record.
+4. Even before the upload is confirmed, SQLiteData attempts to persist the constructed `CKRecord` instance as the last-known server record by calling `refreshLastKnownServerRecord(…)`. This update only succeeds if no previous last-known server record exists, i.e. when uploading a record for the first time. For previously synced records, the stored last-known server record and the constructed upload record share the same `modificationDate`, causing the refresh to be skipped. While this behavior doesn’t cause immediate issues in this scenario, it is conceptually incorrect to treat a pending upload record as a baseline, as it becomes problematic once conflicts are involved.
+5. The record is sent to the server and the result is reported in `SyncEngine.handleSentRecordZoneChanges(…)`.
+	 - Since there are no concurrent server-side changes in this scenario, the upload succeeds without conflict.
+	- The confirmed server record is stored as the new last-known server record, now reflecting state that has been acknowledged by the server.
+	- `SyncMetadata.userModificationTime` is updated from the server-confirmed record, but effectively retains the same value that was used when constructing the upload.
+	- No changes are applied to the local database row, as it already reflects the desired state.
+
+### 2.2 Fetching Server Change
+
+### 2.3 Conflict on Send
+
+### 2.4 Conflict on Fetch
+
 [^1]:	In contrast to conflict-on-send, conflict-on-fetch scenarios are not explicitly signaled by CloudKit. Detecting such conflicts would require SQLiteData to infer them based on the presence of pending local changes for the record.
 
 [^2]:	This value has no equivalent on the client and is therefore unsuitable for conflict resolution. Additionally, the use of `Date` makes it unreliable for precise comparisons.
