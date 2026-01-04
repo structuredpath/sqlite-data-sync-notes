@@ -68,6 +68,19 @@ This scenario describes a local change to a row that is sent to the server witho
 
 ### 2.2 Fetching Server Change
 
+This scenario describes a server-side change that is received and applied locally when there are no pending client-side modifications for the record.
+
+1. The record is fully in sync. The local database row and the last-known server record reflect the same server state.
+2. The record is modified on the server from another device. The server record now contains updated field values, updated per-field modification timestamps, and an updated overall user modification timestamp.
+3. The updated record is delivered to the client and processed in `SyncEngine.handleFetchedRecordZoneChanges(…)` as a modification, which is routed to `SyncEngine.upsertFromServerRecord(…)` to apply the upsert logic.
+	- A corresponding `SyncMetadata` row is ensured to exist, with a populated last-known server record.
+	- The server record’s overall `userModificationTime` is overwritten with the locally stored value from `SyncMetadata`, effectively discarding the incoming server-provided timestamp.
+	- The server record is reconciled with both the last-known server record and the current row fetched from the database via `CKRecord.update(with:row:columnNames:parentForeignKey:)`. This method restores field values from the last-known server record when they are newer than those in the incoming server record. It also narrows down the set of columns to be written by excluding columns whose values were restored (`didSet` flag) as well as columns with pending local edits (`isRowValueModified` flag). In this scenario, however, there are no local edits and the last-known server record does not contain any newer values, so no columns are excluded.
+	- Next, the selected columns are updated on the local database row using values from the server record.
+	- During this update, an *after update* trigger fires and sets `SyncMetadata.userModificationTime` to the current time.
+	- The (potentially mutated) server record is then persisted as the new last-known server record.
+	- Finally, `SyncMetadata.userModificationTime` is updated again, this time by copying the `userModificationTime` from the server record.
+
 ### 2.3 Conflict on Send
 
 ### 2.4 Conflict on Fetch
