@@ -59,7 +59,13 @@ This scenario describes a local change to a row that is sent to the server witho
 	- The `CKRecord` is created from `SyncMetadata._lastKnownServerRecordAllFields`. If no last-known server record exists, a fresh `CKRecord` is created instead.
 	- The local row is then applied onto this record using `CKRecord.update(with:userModificationTime:)`.
 	- Modified fields are stamped with the current `userModificationTime`, while unchanged fields retain their previous timestamps from the last-known server record.
-4. Even before the upload is confirmed, SQLiteData attempts to persist the constructed `CKRecord` instance as the last-known server record by calling `refreshLastKnownServerRecord(…)`. This update only succeeds if no previous last-known server record exists, i.e. when uploading a record for the first time. For previously synced records, the stored last-known server record and the constructed upload record share the same `modificationDate`, causing the refresh to be skipped. While this behavior doesn’t cause immediate issues in this scenario, it is conceptually incorrect to treat a pending upload record as a baseline, as it becomes problematic once conflicts are involved.
+4. Even before the upload is confirmed, SQLiteData attempts to persist the constructed `CKRecord` instance as the last-known server record by calling `refreshLastKnownServerRecord(…)`. This update only succeeds if no previous last-known server record exists, i.e. when uploading a record for the first time. For previously synced records, the stored last-known server record and the constructed upload record share the same `modificationDate`, causing the refresh to be skipped.
+
+> [!WARNING]
+> While this behavior does not cause immediate issues in this scenario, it is conceptually incorrect to treat a pending upload record as a baseline. In order to support conflict resolution using three-way merge, the last-known server record must reflect server-acknowledged state, not client intent.
+> 
+> This surfaces in tests, where the mock server does not populate `modificationDate` when confirming a sent record. In that case, the last-known server record is updated with a still-pending record, which breaks conflict scenarios. But really, a much bigger problem is that the test behavior diverges from production.
+
 5. The record is sent to the server and the result is reported in `SyncEngine.handleSentRecordZoneChanges(…)`.
 	 - Since there are no concurrent server-side changes in this scenario, the upload succeeds without conflict.
 	- The confirmed server record is stored as the new last-known server record, now reflecting state that has been acknowledged by the server.
