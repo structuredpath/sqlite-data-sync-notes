@@ -1,4 +1,4 @@
-# CloudKit Sync Semantics in SQLiteData
+# Current CloudKit Sync Behavior in SQLiteData
 
 This document captures how CloudKit sync currently behaves in [SQLiteData][1] as of version 1.4, focusing on the implementation of the [built-in “field-wise last edit wins” conflict resolution strategy][2]. In particular, it documents how *last-known server records* and *timestamps* are handled today. The goal is to provide a clear reference for the current semantics as a first step towards making the conflict resolution customizable per the discussion in [\#272][3] and to highlight areas that will need to change in order to support a proper three-way merge and custom merge strategies.
 
