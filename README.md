@@ -57,7 +57,7 @@ This scenario describes a local change to a row that is sent to the server witho
 	- In a trigger, the modification is recorded with the sync engine as pending for upload.
 3. The sync engine picks up the pending change in `SyncEngine.nextRecordZoneChangeBatch(…)` and prepares the record to send.
 	- The `CKRecord` is created from `SyncMetadata._lastKnownServerRecordAllFields`. If no last-known server record exists, a fresh `CKRecord` is created instead.
-	- The local row is then applied to this record using `CKRecord.update(with:userModificationTime:)`, stamping each modified field with the current `userModificationTime` while leaving unchanged fields with their existing timestamps.
+	- The local row is then applied to this record using `CKRecord.update(with:userModificationTime:)`, stamping each modified field with the current `userModificationTime` while leaving unchanged fields with their existing timestamps. Even if individual fields were changed at different times, only the latest timestamp is used, so all modified fields end up sharing a single modification time despite timestamps being tracked per field in records.
 4. Even before the upload is confirmed, SQLiteData attempts to persist the constructed `CKRecord` instance as the last-known server record by calling `refreshLastKnownServerRecord(…)`. This update only succeeds if no previous last-known server record exists, i.e. when uploading a record for the first time. For previously synced records, the stored last-known server record and the constructed upload record share the same `modificationDate`, causing the refresh to be skipped.
 
 > [!WARNING]
@@ -88,8 +88,46 @@ This scenario describes a server-side change that is received and applied locall
 
 ### 2.3 Conflict on Send
 
+This scenario describes a local change to a row that is sent to the server while a concurrent server-side edit exists, resulting in a `.serverRecordChanged` error.
+
+1. The record is fully in sync. The local database row and the last-known server record reflect the same server state.
+2. The record is modified on the server from another device and now contains updated field values, updated per-field modification timestamps, and an updated overall user modification timestamp.
+3. The user modifies the record locally, potentially editing different fields than the server change.
+	- The change is written to the local database.
+	- `SyncMetadata.userModificationTime` is updated via a trigger.
+	- In a trigger, the modification is recorded with the sync engine as pending for upload.
+4. The sync engine picks up the pending change in `SyncEngine.nextRecordZoneChangeBatch(…)` and prepares the record to send.
+	- The `CKRecord` is created from `SyncMetadata._lastKnownServerRecordAllFields`.
+	- The local row is then applied to this record using `CKRecord.update(with:userModificationTime:)`, stamping each modified field with the current `userModificationTime` while leaving unchanged fields with their existing timestamps.
+	- `refreshLastKnownServerRecord(…)` is then invoked with the constructed record. In production, this call is skipped because the existing last-known server record has the same `modificationDate`. In tests, however, the check succeeds, causing the client-constructed upload record to be incorrectly persisted as the last-known server record (see 2.1).
+5. The result is reported in `SyncEngine.handleSentRecordZoneChanges(…)` where the send fails with a `.serverRecordChanged` error that includes the latest server record. This error is handled by routing the server record into `SyncEngine.upsertFromServerRecord(…)`, which applies the same upsert logic as in section 2.2, but this time, it resolves the conflict between the server state and the pending client change.
+	- The server record’s overall `userModificationTime` is overwritten with the client’s value.
+	- The server record is reconciled with both the last-known server record and the current row fetched from the database in `CKRecord.update(with:row:columnNames:parentForeignKey:)`.
+	- Inside this method, for each field, two flags are computed:
+		- `didSet`: Attempts to restore the last-known server record’s value and timestamp to the incoming server record. Returns `true` only if (a) the values differ and (b) the last-known server record’s timestamp for this field is great than or equal to the server’s timestamp. In production with a clean last-known server record, this typically returns `false` because the last-known server record has older timestamps, so the incoming server’s value is kept.
+		- `isRowValueModified`: Compares the current database row value to the last-known server record’s value, ignoring timestamps. Returns `true` if they differ, indicating pending client edit exists for this field.
+	- If either `didSet` or `isRowValueModified` is `true`, the field is excluded from the set of columns to be written into the database.
+	- The marked columns are updated for the database row with values from the (potentially mutated) server record.
+	- After this update, a trigger fires and sets `SyncMetadata.userModificationTime` to the current time.
+	- The (potentially mutated) server record is saved as the new last-known server record and the `SyncMetadata.userModificationTime` is overwritten with value from the server record.
+
+> [!WARNING]
+> In tests, the last-known server record can be polluted with client-constructed state before uploads are confirmed (see section 2.1), causing `didSet` equal to `true` to occur more frequently during conflict resolution.
+> 
+> It was observed that `didSet` being equal to `true` can occur in production when concurrent edits happen at the exact same timestamp. Because the comparison uses `<=` (less than or equal), equal timestamps cause the last-known server record’s value to win. This leads to non-deterministic outcomes depending on which device’s change was processed first. 
+
+> [!WARNING]
+> It’s conceptually inappropriate to save a mutated server record as the last-known one acknowledged by the server. It’s optimistically counting on the server to accept on the next send, but another conflict might be encountered with no access to a clean last-known server record.
+> 
+> Unlike the noop last-known server record refresh on send described in section 2.1, this premature refresh happens in both production and test environments.
+
+6. After the conflict is resolved, the failed record is re-queued for upload.
+7. The sync engine picks up the re-queued record for upload in `SyncEngine.nextRecordZoneChangeBatch(…)` using the same logic as step 4. It constructs a `CKRecord` from the updated last-known server record and applies values for fields with pending edits to it.
+8. The sync engine reports the result in `SyncEngine.handleSentRecordZoneChanges(…)`. If the save succeeds, the sync engine updates the metadata by storing the reported record as the last-known server record.
+
 ### 2.4 Conflict on Fetch
 
+TODO
 
 [^1]:	In contrast to conflict-on-send, conflict-on-fetch scenarios are not explicitly signaled by CloudKit. Detecting such conflicts would require SQLiteData to infer them based on the presence of pending local changes for the record.
 
