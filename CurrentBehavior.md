@@ -2,9 +2,9 @@
 
 This document captures how CloudKit sync currently behaves in [SQLiteData][1] as of version 1.4, focusing on the implementation of the [built-in “field-wise last edit wins” conflict resolution strategy][2]. In particular, it documents how *last-known server records* and *timestamps* are handled today. The goal is to provide a clear reference for the current semantics as a first step towards making the conflict resolution customizable per the discussion in [\#272][3] and to highlight areas that will need to change in order to support a proper three-way merge and custom merge strategies.
 
-## 1 Core Concepts
+## 1. Core Concepts
 
-### 1.1 General Sync Flow
+### 1.1. General Sync Flow
 
 At a high level, SQLiteData’s CloudKit sync operates in two directions, both mediated by an underlying `CKSyncEngine`:
 
@@ -15,7 +15,7 @@ Conflicts arise when client-side and server-side changes affect the same record 
 
 The following sections describe the data structures and timestamps that underpin this flow, before diving into concrete send, fetch, and conflict scenarios.
 
-### 1.2 SyncMetadata Fields
+### 1.2. SyncMetadata Fields
 
 SQLiteData with syncing enabled [manages a `SyncMetadata` table in the metadatabase][4] with a row for each row in the user tables. Data stored in that table is used when interfacing with CloudKit. Among others, the table contains the following columns:
 
@@ -23,7 +23,7 @@ SQLiteData with syncing enabled [manages a `SyncMetadata` table in the metadatab
 - `_lastKnownServerRecordAllFields`: The last known `CKRecord` received from the server serialized via `CKRecord.encode(with:)` and thus containing all fields, including per-field modification timestamps (explained in the next section). As it stands, the last-known server record doesn’t necessarily reflect the server state all the time. There are some nuances that are explained later in the document.
 - [`userModificationTime`][6]: A timestamp indicating when the user last modified the record. This value gets updated whenever the row in the user table is updated, be it by a manual edit or due to a change coming from the sync engine.
 
-### 1.3 Per-Field Timestamps
+### 1.3. Per-Field Timestamps
 
 SQLiteData’s built-in “field-wise last edit wins” strategy employed during conflict resolution relies on keeping track of modification timestamps for individual fields. This allows SQLiteData to reason about which values should win when the same record has been edited concurrently.
 
@@ -42,11 +42,11 @@ CKRecord(
 )
 ```
 
-## 2 Sync Scenarios
+## 2. Sync Scenarios
 
 This section walks through concrete sync scenarios to illustrate how SQLiteData behaves in practice and where assumptions start to break down.
 
-### 2.1 Sending Client Change
+### 2.1. Sending Client Change
 
 This scenario describes a local change to a row that is sent to the server without any concurrent server-side edits.
 
@@ -71,7 +71,7 @@ This scenario describes a local change to a row that is sent to the server witho
 	- `SyncMetadata.userModificationTime` is updated from the server-confirmed record, but effectively retains the same value that was used when constructing the upload.
 	- No changes are applied to the local database row, as it already reflects the desired state.
 
-### 2.2 Fetching Server Change
+### 2.2. Fetching Server Change
 
 This scenario describes a server-side change that is received and applied locally when there are no pending client-side modifications for the record.
 
@@ -86,7 +86,7 @@ This scenario describes a server-side change that is received and applied locall
 	- The (potentially mutated) server record is then persisted as the new last-known server record.
 	- Finally, `SyncMetadata.userModificationTime` is updated again, this time by copying the `userModificationTime` from the server record.
 
-### 2.3 Conflict on Send
+### 2.3. Conflict on Send
 
 This scenario describes a local change to a row that is sent to the server while a concurrent server-side edit exists, resulting in a `.serverRecordChanged` error.
 
@@ -125,7 +125,7 @@ This scenario describes a local change to a row that is sent to the server while
 7. The sync engine picks up the re-queued record for upload in `SyncEngine.nextRecordZoneChangeBatch(…)` using the same logic as step 4. It constructs a `CKRecord` from the updated last-known server record and applies values for fields with pending edits to it.
 8. The sync engine reports the result in `SyncEngine.handleSentRecordZoneChanges(…)`. If the save succeeds, the sync engine updates the metadata by storing the reported record as the last-known server record.
 
-### 2.4 Conflict on Fetch
+### 2.4. Conflict on Fetch
 
 TODO
 
