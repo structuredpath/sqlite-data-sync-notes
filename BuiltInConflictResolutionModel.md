@@ -98,7 +98,7 @@ extension MergeConflict {
       return serverValue
     }
 
-    if server.server.modificationTime(for: keyPath) > client.modificationTime(for: keyPath) {
+    if server.modificationTime(for: keyPath) > client.modificationTime(for: keyPath) {
       // field4
       return server.row[keyPath: keyPath]
     } else {
