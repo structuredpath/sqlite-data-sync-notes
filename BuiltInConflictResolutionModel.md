@@ -163,19 +163,19 @@ Per the premise above, modification timestamps are omitted here, as they are onl
 
 While the table shows how the state evolves at each step, it does not convey the path through the history, nor the temporary divergence and later convergence. This is better seen in the branching timeline below, where the lifecycle is visualized. The diagrams use the following legend:
 
-![]()
+![][image-2]
 
 Initial creation and upload (steps 1–4):
 
-![]()
+![][image-3]
 
 Server-side update (steps 5–6):
 
-![]()
+![][image-4]
 
 Concurrent edits and conflict resolution (steps 7–11):
 
-![]()
+![][image-5]
 
 The lifecycle makes it clear that the client keeps two views of a row: the _local database row_ and the _last-known server record_. As long as edits occur on only one side (steps 1–6), changes propagate in a single direction and the two views converge. When both the client and the server make concurrent changes (steps 7–11), a divergence occurs and conflict resolution is required (step 9) to bring them back together.
 
@@ -189,3 +189,7 @@ Conflict resolution is performed using a three-way merge with access to the ance
 [6]:	https://github.com/pointfreeco/sqlite-data/discussions/272#discussioncomment-15170263
 
 [image-1]:	images/ConflictInputs.png
+[image-2]:	images/LifecycleLegend.jpg
+[image-3]:	images/LifecycleGroup1.jpg
+[image-4]:	images/LifecycleGroup2.jpg
+[image-5]:	images/LifecycleGroup3.jpg
