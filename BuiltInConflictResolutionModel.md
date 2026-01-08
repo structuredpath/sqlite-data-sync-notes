@@ -109,7 +109,7 @@ extension MergeConflict {
 }
 ```
 
-This implementation is self-contained and designed to make the merge behavior predictable. It also provides a clear extension point for introducing a custom per-field merge policy in the future, as sketched towards the end of [this comment￼][5].
+This implementation is self-contained and designed to make the merge behavior predictable. It also provides a clear extension point for introducing a custom per-field merge policy in the future, as sketched towards the end of [this comment￼][5].[^1]
 
 The conceptual outcome of the example above is that fields 3 and 4 should adopt the server values and be written into the local database. The current implementation achieves this by upserting directly from the `CKRecord`. Since the model described here no longer operates on raw records, the merge result must be communicated in a different form, and the remaining question is how this outcome should be represented and applied.
 
@@ -139,7 +139,7 @@ extension MergeConflict {
 
 Since the goal of this document is to describe the conceptual model, no further implementation details are explored here. Several aspects would require additional investigation, including whether the sketched resolution method is feasible in practice, how to handle values that do not conform to `Equatable`, and how to treat assets.
 
-## Row Sync Lifecycle
+## 3. Row Sync Lifecycle
 
 While the previous section focused on a single conflict in isolation, this section illustrates the lifecycle of a row across both non-conflict and conflict scenarios.
 
@@ -151,14 +151,14 @@ Per the premise above, modification timestamps are omitted here, as they are onl
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | --------------------------------- | ---------------------- |
 | 1. No row exists yet.                                                                                                                                                       | –                     | –                                 | –                      |
 | 2. Client creates row.                                                                                                                                                      | **count=1**           | –                                 | –                      |
-| 3. Client sends record to server (initial state). Server sets change tag.                                                                                                   | **count=1**           | –                                 | **count=1 @ a**        |
+| 3. Client sends record to server (initial state). Server sets change tag.                                                                                                   | _**count=1**_         | –                                 | **count=1 @ a**        |
 | 4. Send is confirmed and client saves as last-known server record.                                                                                                          | count=1               | count=1 @ a                       | count=1 @ a            |
 | 5. Server updates record independently.                                                                                                                                     | count=1               | count=1 @ a                       | **count=2 @ b**        |
 | 6. Client fetches updated record and advances last-known server record.                                                                                                     | count=2               | count=2 @ b                       | count=2 @ b            |
 | 7. Client updates row locally.                                                                                                                                              | **count=3**           | count=2 @ b                       | count=2 @ b            |
 | 8. Server updates record independently.                                                                                                                                     | **count=3**           | count=2 @ b                       | **count=4 @ c**        |
 | 9. Conflict-on-send (client sends stale record) or conflict-on-fetch (client fetches newer record). Client resolves the conflict and advances the last-known server record. | **count=3/4**         | count=4 @ c                       | count=4 @ c            |
-| 10. Client sends record to server (merged state). Server sets change tag.                                                                                                   | **count=3/4**         | count=4 @ c                       | **count=3/4 @ d**      |
+| 10. Client sends record to server (merged state). Server sets change tag.                                                                                                   | _**count=3/4**_       | count=4 @ c                       | **count=3/4 @ d**      |
 | 11. Send is confirmed and client saves as last-known server record.                                                                                                         | count=3/4             | count=3/4 @ d                     | count=3/4 @ d          |
 
 While the table shows how the state evolves at each step, it does not convey the path through the history, nor the temporary divergence and later convergence. This is better seen in the branching timeline below, where the lifecycle is visualized. The diagrams use the following legend:
@@ -179,7 +179,9 @@ Concurrent edits and conflict resolution (steps 7–11):
 
 The lifecycle makes it clear that the client keeps two views of a row: the _local database row_ and the _last-known server record_. As long as edits occur on only one side (steps 1–6), changes propagate in a single direction and the two views converge. When both the client and the server make concurrent changes (steps 7–11), a divergence occurs and conflict resolution is required (step 9) to bring them back together.
 
-Conflict resolution is performed using a three-way merge with access to the ancestor, client, and server versions as described above (step 9a). Effectively, the client version is rebased onto the server version, and the merged state becomes the new client row pending upload (step 9b). Once the server confirms it, a convergent state is restored (steps 10–11).
+Conflict resolution is performed using a three-way merge with access to the ancestor, client, and server versions as described above (step 9a). Effectively, the client version is rebased onto the server version, and the merged state becomes the new client row pending upload (step 9b). Once the server confirms the send, a convergent state is restored (steps 10–11).
+
+[^1]:	When generalizing this method, the `clientValue == serverValue` case must distinguish between an unchanged field (field 1) and an equal change (field 7). The latter represents a meaningful edit and should be surfaced to the field merge policy rather than short-circuited.
 
 [1]:	https://swiftpackageindex.com/pointfreeco/sqlite-data/main/documentation/sqlitedata/cloudkit#Record-conflicts
 [2]:	CurrentBehavior.md
